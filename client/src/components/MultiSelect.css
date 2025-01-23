@@ -1,0 +1,44 @@
+.multi-select {
+  width: 100%;
+  padding: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.search-input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 16px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.items-list {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.item {
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  user-select: none;
+  color: black;
+  background: white;
+}
+
+.item:hover {
+  background: #f5f5f5;
+}
+
+.item.selected {
+  background: #e3f2fd;
+}
+
+.loading {
+  text-align: center;
+  padding: 16px;
+  color: #666;
+}
