@@ -10,26 +10,123 @@ app.use(express.json());
 // Путь к файлу для хранения состояния
 const STORAGE_FILE = path.join(__dirname, 'storage.json');
 
+// Проверяем существование и валидность файла
+try {
+  if (fs.existsSync(STORAGE_FILE)) {
+    const content = fs.readFileSync(STORAGE_FILE, 'utf8');
+    if (!content || content.trim() === '') {
+      // Если файл пустой, создаем его заново
+      console.log('Storage file is empty, creating new one...');
+      fs.writeFileSync(STORAGE_FILE, JSON.stringify({
+        selectedItems: [],
+        sortOrder: [],
+        searchValue: '',
+        selectedItemsData: []
+      }, null, 2));
+    } else {
+      // Проверяем валидность JSON
+      try {
+        JSON.parse(content);
+      } catch (e) {
+        console.log('Invalid JSON in storage file, creating new one...');
+        fs.writeFileSync(STORAGE_FILE, JSON.stringify({
+          selectedItems: [],
+          sortOrder: [],
+          searchValue: '',
+          selectedItemsData: []
+        }, null, 2));
+      }
+    }
+  } else {
+    // Создаем новый файл если он не существует
+    console.log('Storage file does not exist, creating new one...');
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify({
+      selectedItems: [],
+      sortOrder: [],
+      searchValue: '',
+      selectedItemsData: []
+    }, null, 2));
+  }
+} catch (error) {
+  console.error('Error initializing storage file:', error);
+}
+
+// Сохранение состояния в файл
+const saveStorage = () => {
+  try {
+    const selectedItemsArray = Array.from(storage.selectedItems);
+    console.log('Saving to file. Selected IDs:', selectedItemsArray);
+    console.log('Selected items data:', storage.selectedItemsData);
+
+    const data = {
+      selectedItems: selectedItemsArray,
+      sortOrder: storage.sortOrder,
+      searchValue: storage.searchValue,
+      selectedItemsData: storage.selectedItemsData
+    };
+
+    // Добавим синхронную запись с проверкой
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2));
+
+    // Проверим, что данные записались
+    const savedData = JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8'));
+    console.log('Verification - saved data:', savedData);
+
+    if (savedData.selectedItems.length !== selectedItemsArray.length) {
+      console.error('Data verification failed - lengths don\'t match');
+    } else {
+      console.log('File saved and verified successfully');
+    }
+  } catch (error) {
+    console.error('Error saving storage:', error);
+    // Попробуем создать файл заново при ошибке
+    try {
+      fs.writeFileSync(STORAGE_FILE, JSON.stringify({
+        selectedItems: selectedItemsArray,
+        sortOrder: storage.sortOrder,
+        searchValue: storage.searchValue,
+        selectedItemsData: storage.selectedItemsData
+      }, null, 2), { flag: 'w' });
+      console.log('File recreated successfully');
+    } catch (retryError) {
+      console.error('Error recreating file:', retryError);
+    }
+  }
+};
+
 // Загрузка состояния из файла или создание нового
 const loadStorage = () => {
   try {
     if (fs.existsSync(STORAGE_FILE)) {
+      console.log('Loading from file...');
       const data = JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8'));
+      console.log('Loaded data:', data);
+
+      const selectedIds = new Set(data.selectedItems?.map(id => Number(id)) || []);
+      console.log('Converted selected IDs:', Array.from(selectedIds));
+
+      const selectedItemsData = (data.selectedItemsData || []).map(item => ({
+        ...item,
+        id: Number(item.id)
+      }));
+      console.log('Converted selected items data:', selectedItemsData);
+
       return {
         items: Array.from({ length: 1000000 }, (_, i) => ({
           id: i + 1,
           value: `Item ${i + 1}`
         })),
-        selectedItems: new Set(data.selectedItems || []),
-        sortOrder: data.sortOrder || [],
-        searchValue: data.searchValue || ''
+        selectedItems: selectedIds,
+        sortOrder: (data.sortOrder || []).map(id => Number(id)),
+        searchValue: data.searchValue || '',
+        selectedItemsData: selectedItemsData
       };
     }
   } catch (error) {
     console.error('Error loading storage:', error);
   }
 
-  // Возвращаем начальное состояние, если файл не существует
+  console.log('Creating new storage...');
   return {
     items: Array.from({ length: 1000000 }, (_, i) => ({
       id: i + 1,
@@ -37,22 +134,9 @@ const loadStorage = () => {
     })),
     selectedItems: new Set(),
     sortOrder: [],
-    searchValue: ''
+    searchValue: '',
+    selectedItemsData: []
   };
-};
-
-// Сохранение состояния в файл
-const saveStorage = () => {
-  try {
-    const data = {
-      selectedItems: Array.from(storage.selectedItems),
-      sortOrder: storage.sortOrder,
-      searchValue: storage.searchValue
-    };
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2));
-  } catch (error) {
-    console.error('Error saving storage:', error);
-  }
 };
 
 // Инициализация хранилища
@@ -76,58 +160,87 @@ app.get('/api/items', (req, res) => {
   const { page = 1, search = '', selected = false } = req.query;
   const pageSize = 20;
 
-  let filteredItems = storage.items;
+  // Если запрошены выбранные элементы
+  if (selected === 'true') {
+    console.log('Returning selected items...');
+    console.log('Current selected IDs:', Array.from(storage.selectedItems));
+    console.log('Current selected items data:', storage.selectedItemsData);
 
-  // Применяем поиск только если он не пустой
-  if (search && search.trim() !== '') {
-    filteredItems = filteredItems.filter(item =>
-      item.value.toLowerCase().includes(search.toLowerCase())
-    );
-  }
+    let selectedItems = storage.selectedItemsData;
 
-  // Если запрошены только выбранные элементы
-  if (selected) {
-    filteredItems = filteredItems.filter(item =>
-      storage.selectedItems.has(item.id)
-    );
-  }
+    // Применяем сортировку
+    if (storage.sortOrder.length > 0) {
+      const sortOrderMap = new Map(
+        storage.sortOrder.map((id, index) => [id, index])
+      );
 
-  // Применяем сортировку
-  if (storage.sortOrder.length > 0) {
-    const sortOrderMap = new Map(
-      storage.sortOrder.map((id, index) => [id, index])
-    );
+      selectedItems = [...selectedItems].sort((a, b) => {
+        const aIndex = sortOrderMap.has(a.id) ? sortOrderMap.get(a.id) : Infinity;
+        const bIndex = sortOrderMap.has(b.id) ? sortOrderMap.get(b.id) : Infinity;
+        return aIndex - bIndex;
+      });
+    }
 
-    filteredItems = filteredItems.sort((a, b) => {
-      const aIndex = sortOrderMap.has(a.id) ? sortOrderMap.get(a.id) : Infinity;
-      const bIndex = sortOrderMap.has(b.id) ? sortOrderMap.get(b.id) : Infinity;
-      return aIndex - bIndex;
+    return res.json({
+      items: selectedItems,
+      total: selectedItems.length,
+      hasMore: false
     });
   }
 
-  const start = (page - 1) * pageSize;
-  const paginatedItems = filteredItems.slice(start, start + pageSize);
+  // Создаем копию массива и применяем фильтры
+  let allFilteredItems = [...storage.items];
+
+  // Применяем поиск
+  if (search) {
+    const searchLower = search.toLowerCase();
+    allFilteredItems = allFilteredItems.filter(item =>
+      item.value.toLowerCase().includes(searchLower)
+    );
+  }
+
+  // Исключаем уже выбранные элементы
+  allFilteredItems = allFilteredItems.filter(item => !storage.selectedItems.has(item.id));
+
+  // Применяем пагинацию
+  const start = (parseInt(page) - 1) * pageSize;
+  const end = start + pageSize;
+  const paginatedItems = allFilteredItems.slice(start, end);
+
+  console.log(`Pagination: page=${page}, start=${start}, end=${end}, total=${allFilteredItems.length}`);
 
   res.json({
     items: paginatedItems,
-    total: filteredItems.length,
-    hasMore: start + pageSize < filteredItems.length
+    total: allFilteredItems.length,
+    hasMore: end < allFilteredItems.length
   });
 });
 
 // Обновление выбранных элементов
 app.post('/api/selected', (req, res) => {
   const { items } = req.body;
-  storage.selectedItems = new Set(items);
-  saveStorage(); // Сохраняем состояние в файл
+  console.log('Received items to select:', items);
+
+  // Преобразуем ID в числа
+  const selectedIds = new Set(items.map(id => Number(id)));
+  console.log('Converted to numbers:', Array.from(selectedIds));
+
+  storage.selectedItems = selectedIds;
+
+  // Обновляем полные данные о выбранных элементах
+  storage.selectedItemsData = storage.items.filter(item => selectedIds.has(item.id));
+  console.log('Updated selected items data:', storage.selectedItemsData);
+
+  saveStorage();
   res.json({ success: true });
 });
 
 // Обновление порядка сортировки
 app.post('/api/sort-order', (req, res) => {
   const { order } = req.body;
-  storage.sortOrder = order;
-  saveStorage(); // Сохраняем состояние в файл
+  // Преобразуем ID в числа
+  storage.sortOrder = order.map(id => Number(id));
+  saveStorage();
   res.json({ success: true });
 });
 

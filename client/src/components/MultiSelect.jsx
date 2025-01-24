@@ -28,43 +28,23 @@ const MultiSelect = () => {
     }
   };
 
-  // Инициализация данных
-  useEffect(() => {
-    const initializeData = async () => {
-      try {
-        // Сначала загружаем выбранные элементы
-        await fetchSelectedItems();
-        
-        // Затем загружаем значение поиска
-        const searchResponse = await fetch('http://localhost:5001/api/search-value');
-        const searchData = await searchResponse.json();
-        const searchValue = searchData.searchValue || '';
-        setSearch(searchValue);
-        
-        // Загружаем элементы с учетом поискового запроса
-        await fetchItems(1, searchValue, true);
-      } catch (error) {
-        console.error('Error initializing data:', error);
-      }
-    };
-
-    initializeData();
-  }, []);
-
-  // Сохраняем выбранные элементы в localStorage при изменении
-  useEffect(() => {
-    localStorage.setItem('selectedIds', JSON.stringify(Array.from(selectedIds)));
-  }, [selectedIds]);
-
+  // Упростим логику загрузки
   const fetchItems = async (pageNum, searchQuery, reset = false) => {
     try {
       setLoading(true);
+      console.log(`Fetching items: page=${pageNum}, search=${searchQuery}, reset=${reset}`);
+      
       const response = await fetch(
         `http://localhost:5001/api/items?page=${pageNum}&search=${searchQuery}`
       );
       const data = await response.json();
 
-      setItems(prev => reset ? data.items : [...prev, ...data.items]);
+      if (reset) {
+        setItems(data.items);
+      } else {
+        setItems(prev => [...prev, ...data.items]);
+      }
+      
       setHasMore(data.hasMore);
       setLoading(false);
     } catch (error) {
@@ -73,12 +53,65 @@ const MultiSelect = () => {
     }
   };
 
+  // Один эффект для инициализации
+  useEffect(() => {
+    let isMounted = true;
+
+    const initializeData = async () => {
+      try {
+        setLoading(true);
+        console.log('Initializing data...');
+
+        // 1. Загружаем значение поиска
+        const searchResponse = await fetch('http://localhost:5001/api/search-value');
+        const searchData = await searchResponse.json();
+        const searchValue = searchData.searchValue || '';
+        
+        if (isMounted) {
+          setSearch(searchValue);
+          console.log('Search value loaded:', searchValue);
+
+          // 2. Загружаем выбранные элементы
+          const selectedResponse = await fetch(`http://localhost:5001/api/items?selected=true`);
+          const selectedData = await selectedResponse.json();
+          
+          if (isMounted) {
+            setSelectedIds(new Set(selectedData.items.map(item => item.id)));
+            setSelectedItems(selectedData.items);
+            console.log('Selected items loaded:', selectedData.items.length);
+
+            // 3. Загружаем все элементы
+            await fetchItems(1, searchValue, true);
+          }
+        }
+      } catch (error) {
+        console.error('Error in initialization:', error);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Сохраняем выбранные элементы в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('selectedIds', JSON.stringify(Array.from(selectedIds)));
+  }, [selectedIds]);
+
   const lastItemRef = React.useCallback(node => {
-    if (loading) return;
+    if (loading || !hasMore) return;
     if (observer.current) observer.current.disconnect();
 
     observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore) {
+      if (entries[0].isIntersecting && hasMore && !loading) {
+        console.log('Intersection observed, loading next page');
         setPage(prev => prev + 1);
       }
     });
@@ -86,44 +119,37 @@ const MultiSelect = () => {
     if (node) observer.current.observe(node);
   }, [loading, hasMore]);
 
+  // Упрощаем эффект загрузки
   useEffect(() => {
-    if (page > 1) {
-      fetchItems(page, search);
-    }
-  }, [page]);
+    let timer;
+    
+    const loadItems = async () => {
+      if (loading) return;
 
-  // Обработчик поиска
+      // Если страница 1 или изменился поиск, делаем сброс
+      const reset = page === 1;
+      await fetchItems(page, search, reset);
+    };
+
+    // Добавляем задержку только для поиска
+    if (page === 1) {
+      timer = setTimeout(loadItems, 300);
+    } else {
+      loadItems();
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [page, search]);
+
+  // Обработчик изменения поиска
   const handleSearch = (e) => {
     const value = e.target.value;
     setSearch(value);
     setPage(1);
-
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current);
-    }
-
-    searchTimeout.current = setTimeout(async () => {
-      // Загружаем элементы в любом случае, даже если поиск пустой
-      await fetchItems(1, value, true);
-      
-      try {
-        await fetch('http://localhost:5001/api/search-value', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ searchValue: value })
-        });
-      } catch (error) {
-        console.error('Error saving search value:', error);
-      }
-    }, 300);
+    setHasMore(true);
   };
-
-  // Добавим эффект для загрузки элементов при пустом поиске
-  useEffect(() => {
-    if (!search) {
-      fetchItems(1, '', true);
-    }
-  }, [search]);
 
   // Обработчик выбора элемента
   const handleSelect = async (id) => {
@@ -154,17 +180,19 @@ const MultiSelect = () => {
   const handleDragEnd = async (result) => {
     if (!result.destination) return;
 
-    const reorderedItems = Array.from(items);
+    const reorderedItems = Array.from(selectedItems);
     const [reorderedItem] = reorderedItems.splice(result.source.index, 1);
     reorderedItems.splice(result.destination.index, 0, reorderedItem);
 
-    setItems(reorderedItems);
+    setSelectedItems(reorderedItems);
 
     try {
       await fetch('http://localhost:5001/api/sort-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: reorderedItems.map(item => item.id) })
+        body: JSON.stringify({ 
+          order: reorderedItems.map(item => item.id)
+        })
       });
     } catch (error) {
       console.error('Error updating sort order:', error);
@@ -181,62 +209,60 @@ const MultiSelect = () => {
         className="search-input"
       />
 
-
-    <div style={{ display: 'flex', flexDirection: 'row', gap: '10px' }}>
-
- {/* Отображаем все элементы */}
- <div className="all-items-list">
-        <h3 style={{ paddingBottom: '10px' }}>Все элементы:</h3>
-        <DragDropContext onDragEnd={handleDragEnd}>
-          <Droppable droppableId="items">
-            {(provided) => (
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '10px' }}>
+        {/* Отображаем все элементы */}
+        <div className="all-items-list">
+          <h3 style={{ paddingBottom: '10px' }}>Все элементы:</h3>
+          <div className="items-list">
+            {items.map((item, index) => (
               <div
-                {...provided.droppableProps}
-                ref={provided.innerRef}
-                className="items-list"
+                key={item.id}
+                ref={index === items.length - 1 ? lastItemRef : null}
+                className={`item ${selectedIds.has(item.id) ? 'selected' : ''}`}
+                onClick={() => handleSelect(item.id)}
               >
-                {items.map((item, index) => (
-                  <Draggable
-                    key={item.id}
-                    draggableId={String(item.id)}
-                    index={index}
-                  >
-                    {(provided) => (
-                      <div
-                        ref={index === items.length - 1 ? lastItemRef : null}
-                        {...provided.draggableProps}
-                        {...provided.dragHandleProps}
-                        className={`item ${selectedIds.has(item.id) ? 'selected' : ''}`}
-                        onClick={() => handleSelect(item.id)}
-                      >
-                        {item.value}
-                      </div>
-                    )}
-                  </Draggable>
-                ))}
-                {provided.placeholder}
+                {item.value}
               </div>
-            )}
-          </Droppable>
-        </DragDropContext>
-      </div>
- 
-      {/* Отображаем выбранные элементы */}
-      <div className="selected-items-list">
-        <h3 style={{ paddingBottom: '10px' }}>Выбранные элементы ({selectedItems.length}):</h3>
-        {selectedItems.map(item => (
-          <div
-            key={item.id}
-            className="item selected"
-            onClick={() => handleSelect(item.id)}
-          >
-            {item.value}
+            ))}
           </div>
-        ))}
-      </div>
-
-     
-
+        </div>
+ 
+        {/* Отображаем выбранные элементы с возможностью перетаскивания */}
+        <div className="selected-items-list">
+          <h3 style={{ paddingBottom: '10px' }}>Выбранные элементы ({selectedItems.length}):</h3>
+          <DragDropContext onDragEnd={handleDragEnd}>
+            <Droppable droppableId="selected-items">
+              {(provided) => (
+                <div
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="items-list"
+                >
+                  {selectedItems.map((item, index) => (
+                    <Draggable
+                      key={item.id}
+                      draggableId={String(item.id)}
+                      index={index}
+                    >
+                      {(provided) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                          className="item selected"
+                          onClick={() => handleSelect(item.id)}
+                        >
+                          {item.value}
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
+        </div>
       </div>
 
       {loading && <div className="loading">Загрузка...</div>}
