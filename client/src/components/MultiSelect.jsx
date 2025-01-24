@@ -183,7 +183,7 @@ const MultiSelect = () => {
 
       {/* Отображаем выбранные элементы */}
       <div className="selected-items-list">
-        <h3>Выбранные элементы ({selectedItems.length}):</h3>
+        <h3 style={{ paddingBottom: '10px' }}>Выбранные элементы ({selectedItems.length}):</h3>
         {selectedItems.map(item => (
           <div
             key={item.id}
@@ -197,7 +197,7 @@ const MultiSelect = () => {
 
       {/* Отображаем все элементы */}
       <div className="all-items-list">
-        <h3>Все элементы:</h3>
+        <h3 style={{ paddingBottom: '10px' }}>Все элементы:</h3>
         <DragDropContext onDragEnd={handleDragEnd}>
           <Droppable droppableId="items">
             {(provided) => (
