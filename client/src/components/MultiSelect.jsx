@@ -181,22 +181,11 @@ const MultiSelect = () => {
         className="search-input"
       />
 
-      {/* Отображаем выбранные элементы */}
-      <div className="selected-items-list">
-        <h3 style={{ paddingBottom: '10px' }}>Выбранные элементы ({selectedItems.length}):</h3>
-        {selectedItems.map(item => (
-          <div
-            key={item.id}
-            className="item selected"
-            onClick={() => handleSelect(item.id)}
-          >
-            {item.value}
-          </div>
-        ))}
-      </div>
 
-      {/* Отображаем все элементы */}
-      <div className="all-items-list">
+    <div style={{ display: 'flex', flexDirection: 'row', gap: '10px' }}>
+
+ {/* Отображаем все элементы */}
+ <div className="all-items-list">
         <h3 style={{ paddingBottom: '10px' }}>Все элементы:</h3>
         <DragDropContext onDragEnd={handleDragEnd}>
           <Droppable droppableId="items">
@@ -230,6 +219,24 @@ const MultiSelect = () => {
             )}
           </Droppable>
         </DragDropContext>
+      </div>
+ 
+      {/* Отображаем выбранные элементы */}
+      <div className="selected-items-list">
+        <h3 style={{ paddingBottom: '10px' }}>Выбранные элементы ({selectedItems.length}):</h3>
+        {selectedItems.map(item => (
+          <div
+            key={item.id}
+            className="item selected"
+            onClick={() => handleSelect(item.id)}
+          >
+            {item.value}
+          </div>
+        ))}
+      </div>
+
+     
+
       </div>
 
       {loading && <div className="loading">Загрузка...</div>}
